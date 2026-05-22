@@ -202,4 +202,67 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn list_branches_dedupes_local_vs_remote_same_short_name() {
+        let upstream = tempfile::tempdir().unwrap();
+        init_repo(upstream.path());
+        commit_file(upstream.path(), "x.txt", "hello\n", "init");
+
+        let clone = tempfile::tempdir().unwrap();
+        let upstream_url = upstream.path().display().to_string();
+        let clone_path = clone.path().display().to_string();
+        let out = Command::new("git")
+            .args(["clone", "-q", &upstream_url, &clone_path])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "clone failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let branches = list_branches(clone.path(), None).unwrap();
+        let main_count = branches.iter().filter(|b| *b == "main").count();
+        assert_eq!(main_count, 1, "got: {branches:?}");
+        assert!(
+            !branches.iter().any(|b| b == "origin/main"),
+            "got: {branches:?}"
+        );
+    }
+
+    #[test]
+    fn list_branches_keeps_remote_when_no_local_equivalent() {
+        let upstream = tempfile::tempdir().unwrap();
+        init_repo(upstream.path());
+        commit_file(upstream.path(), "x.txt", "hello\n", "init");
+        Command::new("git")
+            .args([
+                "-C",
+                &upstream.path().display().to_string(),
+                "branch",
+                "feature/only-on-remote",
+            ])
+            .output()
+            .unwrap();
+
+        let clone = tempfile::tempdir().unwrap();
+        Command::new("git")
+            .args([
+                "clone",
+                "-q",
+                &upstream.path().display().to_string(),
+                &clone.path().display().to_string(),
+            ])
+            .output()
+            .unwrap();
+
+        let branches = list_branches(clone.path(), None).unwrap();
+        assert!(
+            branches
+                .iter()
+                .any(|b| b == "origin/feature/only-on-remote"),
+            "got: {branches:?}"
+        );
+    }
 }
