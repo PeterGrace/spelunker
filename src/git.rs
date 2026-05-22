@@ -173,7 +173,7 @@ pub fn read_blob(repo: &Path, branch: &str, file: &str) -> Result<BlobRead> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::path::Path;
     use std::process::Command;
