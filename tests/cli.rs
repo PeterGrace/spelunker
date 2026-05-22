@@ -81,3 +81,27 @@ fn regex_mode_matches_and_bad_regex_exits_2() {
         .assert()
         .code(2);
 }
+
+#[test]
+fn ignore_case_works_for_literal_and_regex() {
+    let fx = Fixture::new();
+    fx.commit("x.txt", "Hello World\n", "init");
+
+    // Literal match ignoring case.
+    Command::cargo_bin("spelunker")
+        .unwrap()
+        .args(["-i", "hello", "x.txt", "-C"])
+        .arg(fx.path())
+        .assert()
+        .success()
+        .stdout("main:1:Hello World\n");
+
+    // Regex match ignoring case.
+    Command::cargo_bin("spelunker")
+        .unwrap()
+        .args(["-i", "--regex", "^HELLO", "x.txt", "-C"])
+        .arg(fx.path())
+        .assert()
+        .success()
+        .stdout("main:1:Hello World\n");
+}
