@@ -135,4 +135,18 @@ mod tests {
         let m = Matcher::literal("anything", false);
         assert!(m.scan(b"").is_empty());
     }
+
+    #[test]
+    fn literal_ignore_case_matches_mixed_case() {
+        let m = Matcher::literal("Needle", true);
+        let hits = m.scan(b"a NEEDLE in a haystack\nno needle here either\n");
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn literal_ignore_case_unicode_lowercasing() {
+        let m = Matcher::literal("ÄPFEL", true);
+        let hits = m.scan("ich mag äpfel\n".as_bytes());
+        assert_eq!(hits.len(), 1);
+    }
 }
