@@ -29,9 +29,7 @@ fn file_missing_is_silent_in_human_mode_and_marked_in_json() {
     fx.commit("x.txt", "needle\n", "init");
     fx.branch("deleted", "main");
     fx.checkout("deleted");
-    std::fs::remove_file(fx.path().join("x.txt")).unwrap();
-    fx.git(&["add", "-A"]);
-    fx.git(&["commit", "-q", "-m", "rm"]);
+    fx.delete_and_commit("x.txt", "rm");
     fx.checkout("main");
 
     // Human mode: only the matching branch appears; the file-missing branch is silent.
@@ -184,9 +182,7 @@ fn json_record_shape_includes_all_status_variants() {
     // Branch with file missing.
     fx.branch("missing", "main");
     fx.checkout("missing");
-    std::fs::remove_file(fx.path().join("x.txt")).unwrap();
-    fx.git(&["add", "-A"]);
-    fx.git(&["commit", "-q", "-m", "rm"]);
+    fx.delete_and_commit("x.txt", "rm");
 
     fx.checkout("main");
 

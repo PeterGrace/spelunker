@@ -1,6 +1,6 @@
 //! Shared fixture helpers for integration tests.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 /// A temporary directory initialised as a git repository.
@@ -16,7 +16,8 @@ impl Fixture {
     /// with a `main` branch and a minimal git identity.
     #[allow(dead_code)]
     pub fn new() -> Self {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir =
+            tempfile::tempdir().expect("failed to create tempdir for integration test fixture");
         let f = Self { dir };
         f.git(&["init", "-q", "-b", "main"]);
         f.git(&["config", "user.email", "test@example.invalid"]);
@@ -28,12 +29,6 @@ impl Fixture {
     #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         self.dir.path()
-    }
-
-    /// Return the path as an owned `PathBuf`.
-    #[allow(dead_code)]
-    pub fn path_buf(&self) -> PathBuf {
-        self.dir.path().to_path_buf()
     }
 
     /// Run a git sub-command inside the repository, asserting success.
@@ -64,6 +59,15 @@ impl Fixture {
     pub fn commit(&self, path: &str, contents: &str, msg: &str) {
         self.write(path, contents);
         self.git(&["add", path]);
+        self.git(&["commit", "-q", "-m", msg]);
+    }
+
+    /// Delete `path` from the working tree and commit the removal on the
+    /// currently checked-out branch. Symmetric counterpart to [`commit`].
+    #[allow(dead_code)]
+    pub fn delete_and_commit(&self, path: &str, msg: &str) {
+        std::fs::remove_file(self.path().join(path)).unwrap();
+        self.git(&["add", "-A"]);
         self.git(&["commit", "-q", "-m", msg]);
     }
 
