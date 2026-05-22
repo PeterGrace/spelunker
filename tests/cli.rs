@@ -169,3 +169,50 @@ fn local_branch_wins_dedup_against_remote_tracking() {
     // `origin/only-on-remote` has no local counterpart, so it must appear.
     assert!(names.contains(&"origin/only-on-remote"), "got: {names:?}");
 }
+
+#[test]
+fn json_record_shape_includes_all_status_variants() {
+    let fx = Fixture::new();
+    fx.commit("x.txt", "needle\n", "init");
+
+    // Branch with no match.
+    fx.branch("no-match", "main");
+    fx.checkout("no-match");
+    fx.commit("x.txt", "nothing\n", "diverge");
+
+    // Branch with file missing.
+    fx.branch("missing", "main");
+    fx.checkout("missing");
+    std::fs::remove_file(fx.path().join("x.txt")).unwrap();
+    fx.git(&["add", "-A"]);
+    fx.git(&["commit", "-q", "-m", "rm"]);
+
+    fx.checkout("main");
+
+    let out = Command::cargo_bin("spelunker")
+        .unwrap()
+        .args(["needle", "x.txt", "--json", "-C"])
+        .arg(fx.path())
+        .output()
+        .unwrap();
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    for v in &arr {
+        // Every record must carry a string "branch" field.
+        assert!(v.get("branch").and_then(|b| b.as_str()).is_some());
+        let status = v.get("status").and_then(|s| s.as_str()).unwrap();
+        match status {
+            "matched" => {
+                let hits = v.get("hits").and_then(|h| h.as_array()).unwrap();
+                for h in hits {
+                    assert!(h.get("line_number").and_then(|n| n.as_u64()).is_some());
+                    assert!(h.get("line").and_then(|l| l.as_str()).is_some());
+                }
+            }
+            "no_match" | "file_missing" => {}
+            "error" => {
+                assert!(v.get("error").and_then(|e| e.as_str()).is_some());
+            }
+            other => panic!("unknown status: {other}"),
+        }
+    }
+}
