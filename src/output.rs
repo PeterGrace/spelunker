@@ -44,13 +44,17 @@ pub fn render<W: Write, E: Write>(
     stdout: &mut W,
     stderr: &mut E,
 ) -> Result<usize> {
-    let mut matched = 0;
+    // Count matched branches once, immutably; both arms below share this value.
+    let matched = results
+        .iter()
+        .filter(|r| matches!(r.status, BranchStatus::Matched(_)))
+        .count();
+
     match format {
         Format::Human => {
             for r in results {
                 match &r.status {
                     BranchStatus::Matched(hits) => {
-                        matched += 1;
                         for h in hits {
                             writeln!(stdout, "{}:{}:{}", r.branch, h.line_number, h.line)?;
                         }
@@ -65,14 +69,13 @@ pub fn render<W: Write, E: Write>(
             writeln!(stderr, "{}/{} branches matched", matched, results.len())?;
         }
         Format::Json => {
-            let json: Vec<serde_json::Value> = results.iter().map(to_json).collect();
+            // Pre-size to avoid geometric reallocations during extend.
+            let mut json: Vec<serde_json::Value> = Vec::with_capacity(results.len());
+            json.extend(results.iter().map(to_json));
+            // Reborrow: to_writer takes the writer by value; we need stdout again
+            // on the next line for the trailing newline, so we hand it a fresh &mut.
             serde_json::to_writer(&mut *stdout, &serde_json::Value::Array(json))?;
             writeln!(stdout)?;
-            for r in results {
-                if matches!(r.status, BranchStatus::Matched(_)) {
-                    matched += 1;
-                }
-            }
         }
     }
     Ok(matched)
