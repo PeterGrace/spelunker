@@ -42,6 +42,7 @@ fn main() -> ExitCode {
         Ok(n) => n,
         Err(e) => {
             tracing::error!(error = %e, "failed to render output");
+            eprintln!("error: {e}");
             return ExitCode::from(2);
         }
     };

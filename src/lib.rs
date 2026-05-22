@@ -13,7 +13,9 @@ pub use search::Hit;
 /// Outcome of searching a single branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchResult {
+    /// Short ref name (e.g. `main`, `feature/x`, `origin/feature/x`).
     pub branch: String,
+    /// What happened when this branch was searched.
     pub status: BranchStatus,
 }
 
@@ -26,6 +28,9 @@ pub enum BranchStatus {
     NoMatch,
     /// File did not exist on this branch.
     FileMissing,
-    /// `git show` failed for this branch for some other reason.
+    /// `git show` failed for this branch for some other reason. The carried
+    /// string is the trimmed stderr from git and is the only error signal —
+    /// callers that need structured error kinds should consult the originating
+    /// `SpelunkerError` before it was flattened.
     Error(String),
 }
