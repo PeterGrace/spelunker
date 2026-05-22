@@ -5,6 +5,18 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
+/// Build a `git` [`Command`] rooted at `repo` with a stable C locale so that
+/// stderr parsing is reliable across user environments (git localises its
+/// messages when `LANG`/`LC_ALL` are set to a non-C locale).
+///
+/// Uses `arg(&Path)` directly to avoid lossy conversion of non-UTF-8 paths.
+fn git_cmd(repo: &Path) -> Command {
+    let mut c = Command::new("git");
+    // `-C <repo>` tells git to operate as if it were started from `repo`.
+    c.arg("-C").arg(repo).env("LC_ALL", "C");
+    c
+}
+
 /// Return `Ok(())` if `repo` is a git working tree or bare repo, else `NotARepo`.
 ///
 /// # Arguments
@@ -16,9 +28,8 @@ use std::process::Command;
 /// Returns `SpelunkerError::NotARepo` if the path is not inside a git repo.
 /// Returns `SpelunkerError::GitInvoke` if the git binary cannot be launched.
 pub fn ensure_repo(repo: &Path) -> Result<()> {
-    let repo_str = repo.display().to_string();
-    let output = Command::new("git")
-        .args(["-C", &repo_str, "rev-parse", "--git-dir"])
+    let output = git_cmd(repo)
+        .args(["rev-parse", "--git-dir"])
         .output()
         .map_err(|e| SpelunkerError::GitInvoke {
             context: "git rev-parse --git-dir".into(),
@@ -63,6 +74,11 @@ pub fn list_branches(repo: &Path, include: Option<&str>) -> Result<Vec<String>> 
         }
     }
     out.sort();
+    // Defensive dedup: the split-on-'/' comparison above correctly suppresses
+    // most duplicates, but a local branch literally named "origin/main" would
+    // still produce a duplicate entry.  Calling dedup() after sort() guarantees
+    // uniqueness regardless of how duplicates arose.
+    out.dedup();
     Ok(out)
 }
 
@@ -80,20 +96,13 @@ pub fn list_branches(repo: &Path, include: Option<&str>) -> Result<Vec<String>> 
 /// Returns `SpelunkerError::GitInvoke` if the git binary cannot be launched.
 /// Returns `SpelunkerError::GitExit` if git exits non-zero.
 fn run_for_each_ref(repo: &Path, namespace: &str, include: Option<&str>) -> Result<Vec<String>> {
-    let repo_str = repo.display().to_string();
     let refspec = match (include, namespace) {
         (Some(glob), "refs/remotes") => format!("refs/remotes/*/{glob}"),
         (Some(glob), ns) => format!("{ns}/{glob}"),
         (None, ns) => ns.to_string(),
     };
-    let output = Command::new("git")
-        .args([
-            "-C",
-            &repo_str,
-            "for-each-ref",
-            "--format=%(refname:short)",
-            &refspec,
-        ])
+    let output = git_cmd(repo)
+        .args(["for-each-ref", "--format=%(refname:short)", &refspec])
         .output()
         .map_err(|e| SpelunkerError::GitInvoke {
             context: format!("git for-each-ref {refspec}"),
@@ -125,9 +134,10 @@ pub enum BlobRead {
 
 /// Read the raw bytes of `file` at the tip of `branch`.
 ///
-/// The function never returns a hard error for missing files or unknown
-/// branches: those are represented as `BlobRead::Missing` and `BlobRead::Error`
-/// respectively. Only failure to launch the git binary itself causes an `Err`.
+/// The function never returns a hard error for missing files or bad refs.
+/// Missing files yield `BlobRead::Missing`; any other git failure (bad ref,
+/// corrupt object, etc.) yields `BlobRead::Error` carrying git's stderr.
+/// Only failure to launch the git binary itself causes an `Err`.
 ///
 /// # Arguments
 ///
@@ -139,15 +149,15 @@ pub enum BlobRead {
 ///
 /// Returns `SpelunkerError::GitInvoke` if the git binary cannot be launched.
 pub fn read_blob(repo: &Path, branch: &str, file: &str) -> Result<BlobRead> {
-    let repo_str = repo.display().to_string();
     let spec = format!("{branch}:{file}");
-    let output = Command::new("git")
-        .args(["-C", &repo_str, "show", &spec])
-        .output()
-        .map_err(|e| SpelunkerError::GitInvoke {
-            context: format!("git show {spec}"),
-            source: e,
-        })?;
+    let output =
+        git_cmd(repo)
+            .args(["show", &spec])
+            .output()
+            .map_err(|e| SpelunkerError::GitInvoke {
+                context: format!("git show {spec}"),
+                source: e,
+            })?;
     if output.status.success() {
         return Ok(BlobRead::Bytes(output.stdout));
     }
@@ -334,6 +344,50 @@ mod tests {
             branches,
             vec!["release/1.0".to_string(), "release/2.0".to_string()]
         );
+    }
+
+    #[test]
+    fn list_branches_dedupes_local_branch_named_like_remote_tracking_ref() {
+        // Degenerate: a local branch literally named "origin/main" must not
+        // appear twice in the output even though split-on-'/' would otherwise
+        // mistake it for a remote-tracking ref.
+        let upstream = tempfile::tempdir().unwrap();
+        init_repo(upstream.path());
+        commit_file(upstream.path(), "x.txt", "hi\n", "init");
+        let clone = tempfile::tempdir().unwrap();
+        let out = Command::new("git")
+            .args([
+                "clone",
+                "-q",
+                &upstream.path().display().to_string(),
+                &clone.path().display().to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "clone failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // Create a local branch literally named "origin/main".
+        Command::new("git")
+            .args([
+                "-C",
+                &clone.path().display().to_string(),
+                "branch",
+                "origin/main",
+            ])
+            .output()
+            .unwrap();
+
+        let branches = list_branches(clone.path(), None).unwrap();
+        let mut counts = std::collections::HashMap::new();
+        for b in &branches {
+            *counts.entry(b.clone()).or_insert(0) += 1;
+        }
+        for (b, n) in &counts {
+            assert_eq!(*n, 1, "branch {b} appears {n} times in {branches:?}");
+        }
     }
 
     #[test]
