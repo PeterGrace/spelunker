@@ -8,7 +8,7 @@ use spelunker::output::{render, Format};
 
 fn main() -> ExitCode {
     // Load a `.env` file if present; ignore the error if none exists.
-    let _ = dotenv::dotenv();
+    let _ = dotenvy::dotenv();
 
     // Configure tracing to stderr, respecting the `RUST_LOG` env var.
     // Falls back to "warn" level when the variable is absent or invalid.
@@ -40,6 +40,13 @@ fn main() -> ExitCode {
     let stderr = std::io::stderr();
     let matched = match render(&results, format, &mut stdout.lock(), &mut stderr.lock()) {
         Ok(n) => n,
+        Err(spelunker::SpelunkerError::Output(io_err))
+            if io_err.kind() == std::io::ErrorKind::BrokenPipe =>
+        {
+            // Consumer closed the pipe (e.g. piped through `head`). Treat as
+            // clean termination — grep behaves the same way.
+            return ExitCode::SUCCESS;
+        }
         Err(e) => {
             tracing::error!(error = %e, "failed to render output");
             eprintln!("error: {e}");

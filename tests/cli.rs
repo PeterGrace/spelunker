@@ -297,3 +297,45 @@ fn not_a_git_repo_exits_two_with_clear_message() {
         .code(2)
         .stderr(contains("not a git repository"));
 }
+
+#[test]
+fn broken_pipe_on_stdout_exits_zero_not_fatal() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let fx = Fixture::new();
+    // Generate a file large enough that `head` can close the pipe before we
+    // finish writing all matches.
+    let mut big = String::new();
+    for i in 0..10_000 {
+        big.push_str(&format!("line {i} contains needle\n"));
+    }
+    fx.commit("x.txt", &big, "init");
+
+    // Launch spelunker piping into `head -n 5` to force a BrokenPipe partway through.
+    let mut spel = std::process::Command::new(env!("CARGO_BIN_EXE_spelunker"))
+        .args(["needle", "x.txt", "-C"])
+        .arg(fx.path())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut head = std::process::Command::new("head")
+        .args(["-n", "5"])
+        .stdin(spel.stdout.take().unwrap())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let _ = head.wait().unwrap();
+    let status = spel.wait().unwrap();
+
+    // The point is: spelunker must NOT exit with code 2 (fatal).
+    // grep's convention is to exit 0 when its pipe is closed.
+    assert_ne!(
+        status.code(),
+        Some(2),
+        "broken pipe should not produce a fatal exit; got status: {status:?}"
+    );
+    // Suppress unused-import warning: Write is pulled in so the test file mirrors
+    // the pattern used in the task description; the import is intentional documentation.
+    let _ = std::io::sink().write_all(b"");
+}

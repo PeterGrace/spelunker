@@ -66,6 +66,11 @@ pub fn render<W: Write, E: Write>(
                     }
                 }
             }
+            // Flush stdout before writing the summary to stderr. Without this,
+            // block-buffered stdout may not drain until after the stderr write,
+            // causing the summary line to appear BEFORE the match output in
+            // interactive terminals.
+            stdout.flush()?;
             writeln!(stderr, "{}/{} branches matched", matched, results.len())?;
         }
         Format::Json => {
