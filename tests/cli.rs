@@ -105,3 +105,28 @@ fn ignore_case_works_for_literal_and_regex() {
         .success()
         .stdout("main:1:Hello World\n");
 }
+
+#[test]
+fn include_glob_restricts_branches_in_json_output() {
+    let fx = Fixture::new();
+    fx.commit("x.txt", "needle\n", "init");
+    for b in ["release/1.0", "release/2.0", "feature/a"] {
+        fx.branch(b, "main");
+    }
+
+    let out = Command::cargo_bin("spelunker")
+        .unwrap()
+        .args(["needle", "x.txt", "--include", "release/*", "--json", "-C"])
+        .arg(fx.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "exit: {:?}, stderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<_> = arr.iter().map(|v| v["branch"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["release/1.0", "release/2.0"]);
+}
