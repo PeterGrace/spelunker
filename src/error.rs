@@ -35,6 +35,10 @@ pub enum SpelunkerError {
     /// An I/O error occurred while writing output.
     #[error("I/O error writing output: {0}")]
     Output(#[from] std::io::Error),
+
+    /// A JSON serialization error occurred while rendering output.
+    #[error("JSON serialization error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 /// Convenience alias so callers can write `spelunker::Result<T>`.

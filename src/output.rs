@@ -65,10 +65,58 @@ pub fn render<W: Write, E: Write>(
             writeln!(stderr, "{}/{} branches matched", matched, results.len())?;
         }
         Format::Json => {
-            unimplemented!("lands in the next task")
+            let json: Vec<serde_json::Value> = results.iter().map(to_json).collect();
+            serde_json::to_writer(&mut *stdout, &serde_json::Value::Array(json))?;
+            writeln!(stdout)?;
+            for r in results {
+                if matches!(r.status, BranchStatus::Matched(_)) {
+                    matched += 1;
+                }
+            }
         }
     }
     Ok(matched)
+}
+
+/// Serialize a single `BranchResult` into a `serde_json::Value` object.
+///
+/// The shape is:
+/// - `branch`: string
+/// - `status`: one of `"matched"`, `"no_match"`, `"file_missing"`, `"error"`
+/// - `hits`: array of `{ line_number, line }` objects (present only when `status == "matched"`)
+/// - `error`: string (present only when `status == "error"`)
+fn to_json(r: &BranchResult) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("branch".into(), serde_json::Value::String(r.branch.clone()));
+    match &r.status {
+        BranchStatus::Matched(hits) => {
+            obj.insert("status".into(), "matched".into());
+            obj.insert(
+                "hits".into(),
+                serde_json::Value::Array(
+                    hits.iter()
+                        .map(|h| {
+                            serde_json::json!({
+                                "line_number": h.line_number,
+                                "line": h.line,
+                            })
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        BranchStatus::NoMatch => {
+            obj.insert("status".into(), "no_match".into());
+        }
+        BranchStatus::FileMissing => {
+            obj.insert("status".into(), "file_missing".into());
+        }
+        BranchStatus::Error(msg) => {
+            obj.insert("status".into(), "error".into());
+            obj.insert("error".into(), serde_json::Value::String(msg.clone()));
+        }
+    }
+    serde_json::Value::Object(obj)
 }
 
 #[cfg(test)]
@@ -131,5 +179,49 @@ mod tests {
         assert!(out.contains("good:1:yes"));
         assert!(!out.contains("boom"));
         assert!(err.contains("bad: boom"));
+    }
+
+    #[test]
+    fn json_emits_one_record_per_branch_with_correct_status() {
+        let results = vec![
+            matched("main", vec![(2, "hi")]),
+            BranchResult {
+                branch: "stale".into(),
+                status: BranchStatus::NoMatch,
+            },
+            BranchResult {
+                branch: "old".into(),
+                status: BranchStatus::FileMissing,
+            },
+            BranchResult {
+                branch: "broken".into(),
+                status: BranchStatus::Error("boom".into()),
+            },
+        ];
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let n = render(&results, Format::Json, &mut out, &mut err).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let arr = v.as_array().expect("top-level array");
+        assert_eq!(arr.len(), 4);
+        assert_eq!(arr[0]["branch"], "main");
+        assert_eq!(arr[0]["status"], "matched");
+        assert_eq!(arr[0]["hits"][0]["line_number"], 2);
+        assert_eq!(arr[0]["hits"][0]["line"], "hi");
+        assert_eq!(arr[1]["status"], "no_match");
+        assert_eq!(arr[2]["status"], "file_missing");
+        assert_eq!(arr[3]["status"], "error");
+        assert_eq!(arr[3]["error"], "boom");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn json_with_empty_results_emits_empty_array() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let n = render(&[], Format::Json, &mut out, &mut err).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v, serde_json::json!([]));
+        assert_eq!(n, 0);
     }
 }
