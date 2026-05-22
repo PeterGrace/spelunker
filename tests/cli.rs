@@ -2,6 +2,7 @@ mod common;
 
 use assert_cmd::Command;
 use common::Fixture;
+use predicates::str::contains;
 use std::collections::HashMap;
 
 #[test]
@@ -287,4 +288,16 @@ fn no_matches_anywhere_exits_one_with_empty_stdout() {
         .assert()
         .code(1)
         .stdout("");
+}
+
+#[test]
+fn not_a_git_repo_exits_two_with_clear_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    Command::cargo_bin("spelunker")
+        .unwrap()
+        .args(["needle", "x.txt", "-C"])
+        .arg(tmp.path())
+        .assert()
+        .code(2)
+        .stderr(contains("not a git repository"));
 }
