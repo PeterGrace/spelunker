@@ -274,3 +274,17 @@ fn per_branch_error_does_not_abort_scan() {
     assert_eq!(by_branch["main"]["status"], "matched");
     assert_eq!(by_branch["good"]["status"], "matched");
 }
+
+#[test]
+fn no_matches_anywhere_exits_one_with_empty_stdout() {
+    let fx = Fixture::new();
+    fx.commit("x.txt", "nothing of interest\n", "init");
+
+    Command::cargo_bin("spelunker")
+        .unwrap()
+        .args(["needle", "x.txt", "-C"])
+        .arg(fx.path())
+        .assert()
+        .code(1)
+        .stdout("");
+}
