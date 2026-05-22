@@ -216,3 +216,61 @@ fn json_record_shape_includes_all_status_variants() {
         }
     }
 }
+
+/// Verify that a dangling ref (fake SHA written directly into refs/heads/)
+/// does not cause a fatal exit.
+///
+/// NOTE: observed behavior differs from the initial plan's expectation.
+/// `git show broken:x.txt` returns "exists on disk, but not in 'broken'"
+/// which `read_blob` classifies as `BlobRead::Missing` (not `Error`), so
+/// the JSON status is `"file_missing"`, not `"error"`. Git never emits an
+/// "object not found" message because it resolves the ref to the (absent)
+/// object and then falls back to the working-tree check. The important
+/// invariant — that one bad branch does not abort the whole scan — still holds.
+#[test]
+fn per_branch_error_does_not_abort_scan() {
+    let fx = Fixture::new();
+    fx.commit("x.txt", "needle\n", "init");
+    fx.branch("good", "main");
+
+    // Write a fake SHA directly into refs/heads/broken to create a dangling ref.
+    // `git for-each-ref` will list it, but `git show broken:x.txt` will fail.
+    let refs_dir = fx.path().join(".git/refs/heads");
+    std::fs::write(
+        refs_dir.join("broken"),
+        "0000000000000000000000000000000000000001\n",
+    )
+    .unwrap();
+
+    let out = Command::cargo_bin("spelunker")
+        .unwrap()
+        .args(["needle", "x.txt", "--json", "-C"])
+        .arg(fx.path())
+        .output()
+        .unwrap();
+
+    // Must not exit with an unrecoverable fatal code.
+    assert!(
+        out.status.success() || out.status.code() == Some(1),
+        "unexpected fatal exit; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    let by_branch: HashMap<_, _> = arr
+        .iter()
+        .map(|v| (v["branch"].as_str().unwrap().to_string(), v.clone()))
+        .collect();
+
+    // The dangling ref appears in output (not suppressed) with a non-matched status.
+    // Observed: "file_missing" (git reports "exists on disk, but not in 'broken'").
+    let broken_status = by_branch["broken"]["status"].as_str().unwrap();
+    assert!(
+        broken_status == "file_missing" || broken_status == "error",
+        "expected file_missing or error for broken branch, got: {broken_status}"
+    );
+
+    // The other branches are unaffected.
+    assert_eq!(by_branch["main"]["status"], "matched");
+    assert_eq!(by_branch["good"]["status"], "matched");
+}
