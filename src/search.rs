@@ -17,6 +17,10 @@ pub enum Matcher {
     /// Match lines containing a fixed substring.
     Literal {
         /// The substring to search for.
+        ///
+        /// **Contract:** already lowercased when `ignore_case` is `true`, so
+        /// the per-line `needle.to_lowercase()` call is eliminated and this
+        /// allocation happens exactly once at construction time.
         needle: String,
         /// If true, comparison is case-insensitive.
         ignore_case: bool,
@@ -33,8 +37,16 @@ impl Matcher {
     /// * `needle` - The substring to search for.
     /// * `ignore_case` - If true, the match ignores ASCII and Unicode case.
     pub fn literal(needle: impl Into<String>, ignore_case: bool) -> Self {
+        let needle: String = needle.into();
+        // Pre-lowercase once at construction time so `scan` never allocates a
+        // fresh String for the needle on every line it inspects.
+        let needle = if ignore_case {
+            needle.to_lowercase()
+        } else {
+            needle
+        };
         Self::Literal {
-            needle: needle.into(),
+            needle,
             ignore_case,
         }
     }
@@ -84,7 +96,7 @@ impl Matcher {
                 Self::Literal {
                     needle,
                     ignore_case: true,
-                } => line.to_lowercase().contains(&needle.to_lowercase()),
+                } => line.to_lowercase().contains(needle.as_str()),
                 Self::Literal {
                     needle,
                     ignore_case: false,
