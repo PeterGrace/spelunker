@@ -112,6 +112,56 @@ fn run_for_each_ref(repo: &Path, namespace: &str, include: Option<&str>) -> Resu
         .collect())
 }
 
+/// Outcome of reading a single blob from a ref.
+#[derive(Debug)]
+pub enum BlobRead {
+    /// File existed and was read; bytes may be empty.
+    Bytes(Vec<u8>),
+    /// File did not exist on this ref.
+    Missing,
+    /// `git show` failed for another reason; carries the stderr message.
+    Error(String),
+}
+
+/// Read the raw bytes of `file` at the tip of `branch`.
+///
+/// The function never returns a hard error for missing files or unknown
+/// branches: those are represented as `BlobRead::Missing` and `BlobRead::Error`
+/// respectively. Only failure to launch the git binary itself causes an `Err`.
+///
+/// # Arguments
+///
+/// * `repo` - Path to the git repository root.
+/// * `branch` - Branch (or any ref) to read from.
+/// * `file` - Repository-relative path to the file.
+///
+/// # Errors
+///
+/// Returns `SpelunkerError::GitInvoke` if the git binary cannot be launched.
+pub fn read_blob(repo: &Path, branch: &str, file: &str) -> Result<BlobRead> {
+    let repo_str = repo.display().to_string();
+    let spec = format!("{branch}:{file}");
+    let output = Command::new("git")
+        .args(["-C", &repo_str, "show", &spec])
+        .output()
+        .map_err(|e| SpelunkerError::GitInvoke {
+            context: format!("git show {spec}"),
+            source: e,
+        })?;
+    if output.status.success() {
+        return Ok(BlobRead::Bytes(output.stdout));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // `git show <branch>:<missing-file>` exits 128 with stderr like:
+    //   fatal: path 'X' does not exist in 'BRANCH'
+    //   fatal: path 'X' exists on disk, but not in 'BRANCH'
+    if stderr.contains("does not exist") || stderr.contains("exists on disk, but not in") {
+        Ok(BlobRead::Missing)
+    } else {
+        Ok(BlobRead::Error(stderr.trim().to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +334,41 @@ mod tests {
             branches,
             vec!["release/1.0".to_string(), "release/2.0".to_string()]
         );
+    }
+
+    #[test]
+    fn read_blob_returns_bytes_when_file_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo(tmp.path());
+        commit_file(tmp.path(), "hello.txt", "hi there\n", "init");
+
+        let blob = read_blob(tmp.path(), "main", "hello.txt").unwrap();
+        let BlobRead::Bytes(bytes) = blob else {
+            panic!("expected Bytes, got something else");
+        };
+        assert_eq!(bytes, b"hi there\n");
+    }
+
+    #[test]
+    fn read_blob_reports_missing_when_file_absent_on_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo(tmp.path());
+        commit_file(tmp.path(), "hello.txt", "hi\n", "init");
+
+        let blob = read_blob(tmp.path(), "main", "does-not-exist.txt").unwrap();
+        assert!(matches!(blob, BlobRead::Missing), "got: {blob:?}");
+    }
+
+    #[test]
+    fn read_blob_reports_error_when_branch_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo(tmp.path());
+        commit_file(tmp.path(), "hello.txt", "hi\n", "init");
+
+        let blob = read_blob(tmp.path(), "no-such-branch", "hello.txt").unwrap();
+        let BlobRead::Error(msg) = blob else {
+            panic!("expected Error, got {blob:?}");
+        };
+        assert!(!msg.is_empty());
     }
 }
