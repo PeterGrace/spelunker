@@ -181,4 +181,15 @@ mod tests {
         let hits = m.scan(b"hello world\nHello again\n");
         assert_eq!(hits.len(), 2);
     }
+
+    #[test]
+    fn scan_lossy_decodes_invalid_utf8() {
+        // 0xFF is invalid UTF-8; scan must not panic.
+        let bytes = b"hello\xFFworld\nfoo\n";
+        let m = Matcher::literal("world", false);
+        let hits = m.scan(bytes);
+        // First line decoded with replacement character still contains "world".
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].line_number, 1);
+    }
 }
