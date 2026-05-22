@@ -265,4 +265,24 @@ mod tests {
             "got: {branches:?}"
         );
     }
+
+    #[test]
+    fn list_branches_with_include_glob_filters_results() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo(tmp.path());
+        commit_file(tmp.path(), "x.txt", "hello\n", "init");
+        let repo = tmp.path().display().to_string();
+        for b in ["release/1.0", "release/2.0", "feature/a", "feature/b"] {
+            Command::new("git")
+                .args(["-C", &repo, "branch", b])
+                .output()
+                .unwrap();
+        }
+
+        let branches = list_branches(tmp.path(), Some("release/*")).unwrap();
+        assert_eq!(
+            branches,
+            vec!["release/1.0".to_string(), "release/2.0".to_string()]
+        );
+    }
 }
