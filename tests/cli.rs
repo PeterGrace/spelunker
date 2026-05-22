@@ -130,3 +130,42 @@ fn include_glob_restricts_branches_in_json_output() {
     let names: Vec<_> = arr.iter().map(|v| v["branch"].as_str().unwrap()).collect();
     assert_eq!(names, vec!["release/1.0", "release/2.0"]);
 }
+
+#[test]
+fn local_branch_wins_dedup_against_remote_tracking() {
+    let upstream = Fixture::new();
+    upstream.commit("x.txt", "needle\n", "init");
+    upstream.branch("only-on-remote", "main");
+
+    let clone_dir = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new("git")
+        .args([
+            "clone",
+            "-q",
+            &upstream.path().display().to_string(),
+            &clone_dir.path().display().to_string(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let out = Command::cargo_bin("spelunker")
+        .unwrap()
+        .args(["needle", "x.txt", "--json", "-C"])
+        .arg(clone_dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<_> = arr.iter().map(|v| v["branch"].as_str().unwrap()).collect();
+    // The local branch `main` must appear.
+    assert!(names.contains(&"main"), "got: {names:?}");
+    // `origin/main` must NOT appear because `main` already covers that tip.
+    assert!(!names.contains(&"origin/main"), "got: {names:?}");
+    // `origin/only-on-remote` has no local counterpart, so it must appear.
+    assert!(names.contains(&"origin/only-on-remote"), "got: {names:?}");
+}
